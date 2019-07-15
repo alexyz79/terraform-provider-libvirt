@@ -34,6 +34,38 @@ func (i *localImage) String() string {
 }
 
 func (i *localImage) Size() (uint64, error) {
+
+	extension := filepath.Ext(i.path)
+
+	if extension == ".zip" {
+
+		archive, err := zip.OpenReader(i.path)
+		if err != nil {
+			return 0, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		defer archive.Close()
+
+		if len(archive.File) != 1 {
+			return 0, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		fi := archive.File[0].FileInfo()
+
+		if fi.IsDir() {
+			return 0, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		file, err := archive.File[0].Open()
+		defer file.Close()
+
+		if err != nil {
+			return 0, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		return uint64(fi.Size()), nil
+	}
+
 	file, err := os.Open(i.path)
 	if err != nil {
 		return 0, err
@@ -50,7 +82,7 @@ func (i *localImage) IsQCOW2() (bool, error) {
 
 	extension := filepath.Ext(i.path)
 
-	if extension == "zip" {
+	if extension == ".zip" {
 
 		archive, err := zip.OpenReader(i.path)
 		if err != nil {
@@ -70,6 +102,8 @@ func (i *localImage) IsQCOW2() (bool, error) {
 		}
 
 		file, err := archive.File[0].Open()
+		defer file.Close()
+
 		if err != nil {
 			return false, fmt.Errorf("Error while opening %s: %s", i.path, err)
 		}
@@ -101,7 +135,7 @@ func (i *localImage) Import(copier func(io.Reader) error, vol libvirtxml.Storage
 
 	extension := filepath.Ext(i.path)
 
-	if extension == "zip" {
+	if extension == ".zip" {
 
 		archive, err := zip.OpenReader(i.path)
 		if err != nil {
