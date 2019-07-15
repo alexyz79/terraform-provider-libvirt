@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -15,8 +16,62 @@ import (
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	libvirt "github.com/libvirt/libvirt-go"
-	"github.com/libvirt/libvirt-go-xml"
+	libvirtxml "github.com/libvirt/libvirt-go-xml"
 )
+
+// PCIHostDevice Defines a PCI Device on the host
+type PCIHostDevice struct {
+	XMLName xml.Name `xml:"device"`
+	Text    string   `xml:",chardata"`
+	Name    string   `xml:"name"`
+	Path    string   `xml:"path"`
+	Parent  string   `xml:"parent"`
+	Driver  struct {
+		Text string `xml:",chardata"`
+		Name string `xml:"name"`
+	} `xml:"driver"`
+	Capability struct {
+		Text     string `xml:",chardata"`
+		Type     string `xml:"type,attr"`
+		Domain   string `xml:"domain"`
+		Bus      string `xml:"bus"`
+		Slot     string `xml:"slot"`
+		Function string `xml:"function"`
+		Product  struct {
+			Text string `xml:",chardata"`
+			ID   string `xml:"id,attr"`
+		} `xml:"product"`
+		Vendor struct {
+			Text string `xml:",chardata"`
+			ID   string `xml:"id,attr"`
+		} `xml:"vendor"`
+		Capability struct {
+			Text string `xml:",chardata"`
+			Type string `xml:"type,attr"`
+		} `xml:"capability"`
+		IommuGroup struct {
+			Text    string `xml:",chardata"`
+			Number  string `xml:"number,attr"`
+			Address []struct {
+				Text     string `xml:",chardata"`
+				Domain   string `xml:"domain,attr"`
+				Bus      string `xml:"bus,attr"`
+				Slot     string `xml:"slot,attr"`
+				Function string `xml:"function,attr"`
+			} `xml:"address"`
+		} `xml:"iommuGroup"`
+		PciExpress struct {
+			Text string `xml:",chardata"`
+			Link []struct {
+				Text     string `xml:",chardata"`
+				Validity string `xml:"validity,attr"`
+				Port     string `xml:"port,attr"`
+				Speed    string `xml:"speed,attr"`
+				Width    string `xml:"width,attr"`
+			} `xml:"link"`
+		} `xml:"pci-express"`
+	} `xml:"capability"`
+}
 
 // deprecated, now defaults to not use it, but we warn the user
 const skipQemuAgentEnvVar = "TF_SKIP_QEMU_AGENT"
@@ -255,11 +310,101 @@ func setCoreOSIgnition(d *schema.ResourceData, domainDef *libvirtxml.Domain) err
 func setVideo(d *schema.ResourceData, domainDef *libvirtxml.Domain) error {
 	prefix := "video.0"
 	if _, ok := d.GetOk(prefix); ok {
+
+		disabled := d.Get(prefix + ".disabled").(bool)
+		if disabled {
+			return nil
+		}
+
 		domainDef.Devices.Videos = append(domainDef.Devices.Videos, libvirtxml.DomainVideo{
 			Model: libvirtxml.DomainVideoModel{
 				Type: d.Get(prefix + ".type").(string),
 			},
 		})
+	}
+
+	return nil
+}
+
+func setHostDevices(d *schema.ResourceData, domainDef *libvirtxml.Domain, virConn *libvirt.Connect) error {
+
+	nodes, _ := virConn.ListAllNodeDevices(libvirt.CONNECT_LIST_NODE_DEVICES_CAP_PCI_DEV)
+
+	for i := 0; i < d.Get("host_device.#").(int); i++ {
+
+		prefix := fmt.Sprintf("host_device.%d", i)
+		productid := d.Get(prefix + ".product_id").(string)
+		vendorid := d.Get(prefix + ".vendor_id").(string)
+
+		for _, node := range nodes {
+
+			xmlstr, err := node.GetXMLDesc(0)
+
+			var data PCIHostDevice
+			err = xml.Unmarshal([]byte(xmlstr), &data)
+			if err != nil {
+				continue
+			}
+
+			if data.Capability.Product.ID == productid && data.Capability.Vendor.ID == vendorid {
+
+				var udomain uint
+				var ubus uint
+				var uslot uint
+				var ufunction uint
+
+				domain, err := strconv.ParseUint(data.Capability.Domain, 16, 32)
+				if err != nil {
+					continue
+				}
+
+				bus, err := strconv.ParseUint(data.Capability.Bus, 16, 32)
+
+				if err != nil {
+					continue
+				}
+
+				slot, err := strconv.ParseUint(data.Capability.Slot, 16, 32)
+
+				if err != nil {
+					continue
+				}
+
+				function, err := strconv.ParseUint(data.Capability.Function, 16, 32)
+				if err != nil {
+					continue
+				}
+
+				udomain = uint(domain)
+				ubus = uint(bus)
+				uslot = uint(slot)
+				ufunction = uint(function)
+
+				hostDevice := libvirtxml.DomainHostdev{
+					SubsysPCI: &libvirtxml.DomainHostdevSubsysPCI{
+						Source: &libvirtxml.DomainHostdevSubsysPCISource{
+							Address: &libvirtxml.DomainAddressPCI{
+								Domain:   &udomain,
+								Bus:      &ubus,
+								Slot:     &uslot,
+								Function: &ufunction,
+							},
+						},
+					},
+				}
+
+				err = node.Detach()
+
+				if err != nil {
+					return fmt.Errorf("Error detaching device from host")
+				}
+
+				domainDef.Devices.Hostdevs = append(domainDef.Devices.Hostdevs, hostDevice)
+			}
+
+			node.Free()
+		}
+
 	}
 
 	return nil
@@ -272,7 +417,14 @@ func setGraphics(d *schema.ResourceData, domainDef *libvirtxml.Domain, arch stri
 	}
 
 	prefix := "graphics.0"
+
 	if _, ok := d.GetOk(prefix); ok {
+
+		disabled := d.Get(prefix + ".disabled").(bool)
+		if disabled {
+			return nil
+		}
+
 		domainDef.Devices.Graphics = []libvirtxml.DomainGraphic{{}}
 		graphicsType, ok := d.GetOk(prefix + ".type")
 		if !ok {

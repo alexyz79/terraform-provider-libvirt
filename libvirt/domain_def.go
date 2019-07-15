@@ -53,13 +53,6 @@ func newDomainDef() libvirtxml.Domain {
 		},
 		CPU: &libvirtxml.DomainCPU{},
 		Devices: &libvirtxml.DomainDeviceList{
-			Graphics: []libvirtxml.DomainGraphic{
-				{
-					Spice: &libvirtxml.DomainGraphicSpice{
-						AutoPort: "yes",
-					},
-				},
-			},
 			Channels: []libvirtxml.DomainChannel{
 				{
 					Target: &libvirtxml.DomainChannelTarget{
