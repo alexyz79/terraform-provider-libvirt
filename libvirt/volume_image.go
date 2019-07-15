@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -8,11 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/libvirt/libvirt-go-xml"
+	libvirtxml "github.com/libvirt/libvirt-go-xml"
 )
 
 // network transparent image
@@ -45,6 +47,42 @@ func (i *localImage) Size() (uint64, error) {
 }
 
 func (i *localImage) IsQCOW2() (bool, error) {
+
+	extension := filepath.Ext(i.path)
+
+	if extension == "zip" {
+
+		archive, err := zip.OpenReader(i.path)
+		if err != nil {
+			return false, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		defer archive.Close()
+
+		if len(archive.File) != 1 {
+			return false, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		fi := archive.File[0].FileInfo()
+
+		if fi.IsDir() {
+			return false, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		file, err := archive.File[0].Open()
+		if err != nil {
+			return false, fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		buf := make([]byte, 8)
+		_, err = io.ReadAtLeast(file, buf, 8)
+		if err != nil {
+			return false, err
+		}
+
+		return isQCOW2Header(buf)
+	}
+
 	file, err := os.Open(i.path)
 	defer file.Close()
 	if err != nil {
@@ -55,12 +93,53 @@ func (i *localImage) IsQCOW2() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return isQCOW2Header(buf)
 }
 
 func (i *localImage) Import(copier func(io.Reader) error, vol libvirtxml.StorageVolume) error {
+
+	extension := filepath.Ext(i.path)
+
+	if extension == "zip" {
+
+		archive, err := zip.OpenReader(i.path)
+		if err != nil {
+			return fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		defer archive.Close()
+
+		if len(archive.File) != 1 {
+			return fmt.Errorf("Error while opening %s: ZIP must contain only one file", i.path)
+		}
+
+		fi := archive.File[0].FileInfo()
+
+		if fi.IsDir() {
+			return fmt.Errorf("Error while opening %s: ZIP must contain only one file", i.path)
+		}
+
+		file, err := archive.File[0].Open()
+		if err != nil {
+			return fmt.Errorf("Error while opening %s: %s", i.path, err)
+		}
+
+		// we can skip the upload if the modification times are the same
+		if vol.Target.Timestamps != nil && vol.Target.Timestamps.Mtime != "" {
+			log.Printf("%s", fi.ModTime().String())
+			if fi.ModTime() == timeFromEpoch(vol.Target.Timestamps.Mtime) {
+				log.Printf("Modification time is the same: skipping image copy")
+				return nil
+			}
+		}
+
+		return copier(file)
+	}
+
 	file, err := os.Open(i.path)
 	defer file.Close()
+
 	if err != nil {
 		return fmt.Errorf("Error while opening %s: %s", i.path, err)
 	}
@@ -69,6 +148,7 @@ func (i *localImage) Import(copier func(io.Reader) error, vol libvirtxml.Storage
 	if err != nil {
 		return err
 	}
+
 	// we can skip the upload if the modification times are the same
 	if vol.Target.Timestamps != nil && vol.Target.Timestamps.Mtime != "" {
 		if fi.ModTime() == timeFromEpoch(vol.Target.Timestamps.Mtime) {
