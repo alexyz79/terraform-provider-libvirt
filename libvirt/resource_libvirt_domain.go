@@ -12,7 +12,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/dmacvicar/terraform-provider-libvirt/libvirt/helper/suppress"
 	"github.com/hashicorp/terraform/helper/schema"
-	libvirt "github.com/libvirt/libvirt-go"
+	"github.com/libvirt/libvirt-go"
 	libvirtxml "github.com/libvirt/libvirt-go-xml"
 )
 
@@ -225,6 +225,11 @@ func resourceLibvirtDomain() *schema.Resource {
 				MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
+						"disabled": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
 						"type": {
 							Type:     schema.TypeString,
 							Optional: true,
@@ -248,12 +253,34 @@ func resourceLibvirtDomain() *schema.Resource {
 					},
 				},
 			},
+			"host_device": {
+				Type:     schema.TypeList,
+				Optional: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"product_id": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"vendor_id": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+					},
+				},
+			},
 			"video": {
 				Type:     schema.TypeList,
 				Optional: true,
 				MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
+						"disabled": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
 						"type": {
 							Type:     schema.TypeString,
 							Optional: true,
@@ -468,6 +495,7 @@ func resourceLibvirtDomainCreate(d *schema.ResourceData, meta interface{}) error
 	setCmdlineArgs(d, &domainDef)
 	setFirmware(d, &domainDef)
 	setBootDevices(d, &domainDef)
+	setHostDevices(d, &domainDef, virConn)
 
 	if err := setCoreOSIgnition(d, &domainDef); err != nil {
 		return err
