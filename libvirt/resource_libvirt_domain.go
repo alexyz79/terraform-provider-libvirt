@@ -150,6 +150,10 @@ func resourceLibvirtDomain() *schema.Resource {
 							Type:     schema.TypeString,
 							Optional: true,
 						},
+						"dev": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
 						"scsi": {
 							Type:     schema.TypeBool,
 							Optional: true,
@@ -827,6 +831,12 @@ func resourceLibvirtDomainRead(d *schema.ResourceData, meta interface{}) error {
 			disk = map[string]interface{}{
 				"volume_id": virVolKey,
 			}
+		} else if diskDef.Source.Block != nil {
+
+			disk = map[string]interface{}{
+				"dev": diskDef.Source.Block.Dev,
+			}
+
 		} else {
 			pool, err := virConn.LookupStoragePoolByName(diskDef.Source.Volume.Pool)
 			if err != nil {

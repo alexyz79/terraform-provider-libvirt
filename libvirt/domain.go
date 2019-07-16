@@ -708,6 +708,13 @@ func setDisks(d *schema.ResourceData, domainDef *libvirtxml.Domain, virConn *lib
 			if !strings.HasSuffix(file.(string), ".qcow2") {
 				disk.Driver.Type = "raw"
 			}
+		} else if dev, ok := d.GetOk(prefix + ".dev"); ok {
+			// support for local block devices
+			disk.Source = &libvirtxml.DomainDiskSource{
+				Block: &libvirtxml.DomainDiskSourceBlock{
+					Dev: dev.(string),
+				},
+			}
 		}
 
 		domainDef.Devices.Disks = append(domainDef.Devices.Disks, disk)
